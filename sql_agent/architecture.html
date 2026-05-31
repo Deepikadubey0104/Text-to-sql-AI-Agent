@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Text-to-SQL Agent — Architecture</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap');
+
+:root {
+  --bg:        #070a0f;
+  --surface:   #0d1117;
+  --border:    #1e2d3d;
+  --accent:    #00d4aa;
+  --accent2:   #4facfe;
+  --warn:      #f0a500;
+  --danger:    #f85149;
+  --purple:    #a78bfa;
+  --pink:      #f472b6;
+  --text:      #e6edf3;
+  --muted:     #8b949e;
+  --dim:       #30363d;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Syne', sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* background grid */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(0,212,170,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,212,170,0.025) 1px, transparent 1px);
+  background-size: 32px 32px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.container {
+  position: relative;
+  z-index: 1;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 48px 24px 80px;
+}
+
+/* header */
+.header {
+  text-align: center;
+  margin-bottom: 64px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0,212,170,0.08);
+  border: 1px solid rgba(0,212,170,0.2);
+  border-radius: 100px;
+  padding: 6px 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--accent);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
+
+.dot { width: 6px; height: 6px; background: var(--accent); border-radius: 50%; animation: blink 1.5s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+h1 {
+  font-size: clamp(28px, 5vw, 48px);
+  font-weight: 800;
+  letter-spacing: -1px;
+  line-height: 1.1;
+  margin-bottom: 12px;
+}
+
+h1 span { color: var(--accent); }
+
+.subtitle {
+  color: var(--muted);
+  font-size: 15px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* section titles */
+.section-title {
+  font-size: 11px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--dim);
+}
+
+/* ── WORKFLOW DIAGRAM ── */
+.workflow {
+  margin-bottom: 64px;
+}
+
+.flow-container {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 40px 32px;
+  position: relative;
+  overflow: hidden;
+}
+
+.flow-container::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--accent2), var(--purple));
+}
+
+.flow-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 0;
+  flex-wrap: nowrap;
+}
+
+.flow-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.flow-node:hover { transform: translateY(-3px); }
+
+.node-box {
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+  border: 1px solid;
+  min-width: 120px;
+  position: relative;
+}
+
+.node-label {
+  font-size: 9px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.node-user    { background: rgba(167,139,250,0.1); border-color: rgba(167,139,250,0.3); color: var(--purple); }
+.node-ui      { background: rgba(79,172,254,0.1);  border-color: rgba(79,172,254,0.3);  color: var(--accent2); }
+.node-guard   { background: rgba(248,81,73,0.1);   border-color: rgba(248,81,73,0.3);   color: var(--danger); }
+.node-schema  { background: rgba(0,212,170,0.1);   border-color: rgba(0,212,170,0.3);   color: var(--accent); }
+.node-llm     { background: rgba(240,165,0,0.1);   border-color: rgba(240,165,0,0.3);   color: var(--warn); }
+.node-exec    { background: rgba(0,212,170,0.1);   border-color: rgba(0,212,170,0.3);   color: var(--accent); }
+.node-db      { background: rgba(79,172,254,0.1);  border-color: rgba(79,172,254,0.3);  color: var(--accent2); }
+.node-obs     { background: rgba(244,114,182,0.1); border-color: rgba(244,114,182,0.3); color: var(--pink); }
+
+.arrow {
+  color: var(--dim);
+  font-size: 18px;
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+/* vertical section in workflow */
+.flow-vertical {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.v-arrow {
+  color: var(--dim);
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* langgraph box */
+.lg-box {
+  border: 1px dashed rgba(0,212,170,0.2);
+  border-radius: 12px;
+  padding: 20px;
+  margin: 16px 0;
+  position: relative;
+}
+
+.lg-label {
+  position: absolute;
+  top: -10px;
+  left: 16px;
+  background: var(--surface);
+  padding: 0 8px;
+  font-size: 9px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--accent);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.lg-nodes {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  flex-wrap: wrap;
+}
+
+/* db row */
+.db-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.db-chip {
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  border: 1px solid rgba(79,172,254,0.3);
+  color: var(--accent2);
+  background: rgba(79,172,254,0.08);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.db-chip span { font-size: 9px; color: var(--muted); }
+
+/* side panels */
+.side-panels {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.side-chip {
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.side-chip span { font-size: 9px; color: var(--muted); }
+.chip-obs { border: 1px solid rgba(244,114,182,0.3); color: var(--pink); background: rgba(244,114,182,0.08); }
+.chip-qdrant { border: 1px solid rgba(240,165,0,0.3); color: var(--warn); background: rgba(240,165,0,0.08); }
+.chip-gemini { border: 1px solid rgba(240,165,0,0.3); color: var(--warn); background: rgba(240,165,0,0.08); }
+.chip-log { border: 1px solid rgba(139,148,158,0.3); color: var(--muted); background: rgba(139,148,158,0.08); }
+
+
+/* ── FOLDER STRUCTURE ── */
+.folder-section { margin-bottom: 64px; }
+
+.folder-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.folder-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.folder-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.folder-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.folder-icon { font-size: 16px; }
+
+.file-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(30,45,61,0.5);
+}
+
+.file-item:last-child { border-bottom: none; }
+
+.file-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.file-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* ── TECH STACK ── */
+.tech-section { margin-bottom: 64px; }
+
+.tech-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.tech-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: border-color 0.2s;
+}
+
+.tech-card:hover { border-color: var(--accent); }
+
+.tech-icon { font-size: 22px; flex-shrink: 0; }
+
+.tech-info {}
+.tech-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.tech-role { font-size: 10px; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+
+/* ── NODE DETAILS ── */
+.nodes-section { margin-bottom: 64px; }
+
+.nodes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.node-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  border-left: 3px solid;
+  transition: transform 0.2s;
+}
+
+.node-card:hover { transform: translateY(-2px); }
+
+.node-card.guard-card  { border-left-color: var(--danger); }
+.node-card.schema-card { border-left-color: var(--accent); }
+.node-card.rel-card    { border-left-color: var(--accent2); }
+.node-card.gen-card    { border-left-color: var(--warn); }
+.node-card.val-card    { border-left-color: var(--danger); }
+.node-card.exec-card   { border-left-color: var(--purple); }
+
+.node-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.node-num {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: var(--dim);
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted);
+}
+
+.node-card-desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+
+.node-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.5px;
+  background: var(--dim);
+  color: var(--muted);
+}
+
+/* footer */
+.footer {
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  padding-top: 32px;
+  border-top: 1px solid var(--dim);
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="badge"><div class="dot"></div>AI Engineering Project</div>
+    <h1>Text-to-<span>SQL</span> AI Agent</h1>
+    <p class="subtitle">Architecture · Folder Structure · Workflow · Tech Stack</p>
+  </div>
+
+  <!-- WORKFLOW DIAGRAM -->
+  <div class="workflow">
+    <div class="section-title">01 — Workflow Diagram</div>
+    <div class="flow-container">
+
+      <div class="flow-vertical">
+
+        <!-- User -->
+        <div class="flow-node">
+          <div class="node-box node-user">👤 User Query</div>
+          <div class="node-label">plain english input</div>
+        </div>
+        <div class="v-arrow">↓</div>
+
+        <!-- Streamlit -->
+        <div class="flow-node">
+          <div class="node-box node-ui">🖥 Streamlit UI</div>
+          <div class="node-label">chat interface + feedback</div>
+        </div>
+        <div class="v-arrow">↓</div>
+
+        <!-- LangGraph Box -->
+        <div class="lg-box" style="width:100%">
+          <div class="lg-label">LANGGRAPH AGENT</div>
+          <div class="lg-nodes">
+
+            <div class="flow-node">
+              <div class="node-box node-guard">🛡 Input Guardrail</div>
+              <div class="node-label">block DDL + classify intent</div>
+            </div>
+            <div class="arrow">→</div>
+
+            <div class="flow-node">
+              <div class="node-box node-schema">🔍 Schema Retrieval</div>
+              <div class="node-label">embed → search qdrant</div>
+            </div>
+            <div class="arrow">→</div>
+
+            <div class="flow-node">
+              <div class="node-box node-schema">✅ Relevance Check</div>
+              <div class="node-label">is query answerable?</div>
+            </div>
+            <div class="arrow">→</div>
+
+            <div class="flow-node">
+              <div class="node-box node-llm">⚡ SQL Generation</div>
+              <div class="node-label">few-shot → gemini llm</div>
+            </div>
+            <div class="arrow">→</div>
+
+            <div class="flow-node">
+              <div class="node-box node-guard">🔒 SQL Validation</div>
+              <div class="node-label">block forbidden keywords</div>
+            </div>
+            <div class="arrow">→</div>
+
+            <div class="flow-node">
+              <div class="node-box node-exec">▶ Execution</div>
+              <div class="node-label">route by db_type</div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="v-arrow">↓</div>
+
+        <!-- Databases -->
+        <div class="db-row">
+          <div class="db-chip">🐘 PostgreSQL<span>customers · orders · products</span></div>
+          <div class="db-chip">🐬 MySQL<span>employees · departments</span></div>
+          <div class="db-chip">🍃 MongoDB<span>inventory · suppliers</span></div>
+        </div>
+
+        <div class="v-arrow">↓</div>
+
+        <!-- Result -->
+        <div class="flow-node">
+          <div class="node-box node-ui">📊 Result → Streamlit</div>
+          <div class="node-label">dataframe + sql + feedback</div>
+        </div>
+
+        <!-- Side services -->
+        <div class="side-panels">
+          <div class="side-chip chip-qdrant">🗄 Qdrant<span>schema vectors</span></div>
+          <div class="side-chip chip-gemini">🤖 Gemini<span>llm + embeddings</span></div>
+          <div class="side-chip chip-obs">📈 Langfuse<span>traces + scores</span></div>
+          <div class="side-chip chip-log">📝 Logger<span>file + terminal</span></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- FOLDER STRUCTURE -->
+  <div class="folder-section">
+    <div class="section-title">02 — Folder Structure</div>
+    <div class="folder-grid">
+
+      <div class="folder-card">
+        <div class="folder-name"><span class="folder-icon">📁</span>connectors/</div>
+        <div class="file-item"><span class="file-name">postgres.py</span><span class="file-desc">PostgreSQL connection + execute + disconnect</span></div>
+        <div class="file-item"><span class="file-name">mysql.py</span><span class="file-desc">MySQL connection using pymysql + DictCursor</span></div>
+        <div class="file-item"><span class="file-name">mongodb.py</span><span class="file-desc">MongoDB client with RFC 3986 URL encoding</span></div>
+      </div>
+
+      <div class="folder-card">
+        <div class="folder-name"><span class="folder-icon">📁</span>schema/</div>
+        <div class="file-item"><span class="file-name">extractor.py</span><span class="file-desc">Auto-extract schema from all 3 databases</span></div>
+        <div class="file-item"><span class="file-name">embedder.py</span><span class="file-desc">Gemini embeddings + table description builder</span></div>
+        <div class="file-item"><span class="file-name">vector_store.py</span><span class="file-desc">Qdrant storage + semantic search function</span></div>
+        <div class="file-item"><span class="file-name">init_db.py</span><span class="file-desc">PostgreSQL sample data + schema loader</span></div>
+        <div class="file-item"><span class="file-name">init_mysql_mongo.py</span><span class="file-desc">MySQL + MongoDB sample data initializer</span></div>
+      </div>
+
+      <div class="folder-card">
+        <div class="folder-name"><span class="folder-icon">📁</span>prompts/</div>
+        <div class="file-item"><span class="file-name">sql_prompt.py</span><span class="file-desc">Dynamic multi-DB few-shot prompt builder</span></div>
+        <div class="file-item"><span class="file-name">llm.py</span><span class="file-desc">Gemini SQL generation + response cleaning</span></div>
+      </div>
+
+      <div class="folder-card">
+        <div class="folder-name"><span class="folder-icon">📁</span>graph/</div>
+        <div class="file-item"><span class="file-name">state.py</span><span class="file-desc">AgentState TypedDict — shared state across nodes</span></div>
+        <div class="file-item"><span class="file-name">nodes.py</span><span class="file-desc">All 6 agent nodes + conditional routing logic</span></div>
+        <div class="file-item"><span class="file-name">agent.py</span><span class="file-desc">LangGraph pipeline + compiled agent instance</span></div>
+      </div>
+
+      <div class="folder-card">
+        <div class="folder-name"><span class="folder-icon">📁</span>evaluation/</div>
+        <div class="file-item"><span class="file-name">langfuse_tracker.py</span><span class="file-desc">Traces, spans, generations, scores, feedback</span></div>
+      </div>
+
+      <div class="folder-card">
+        <div class="folder-name"><span class="folder-icon">📁</span>config/</div>
+        <div class="file-item"><span class="file-name">logger.py</span><span class="file-desc">Daily rotating file + terminal logger</span></div>
+      </div>
+
+      <div class="folder-card">
+        <div class="folder-name"><span class="folder-icon">📄</span>root files</div>
+        <div class="file-item"><span class="file-name">app.py</span><span class="file-desc">Streamlit chat UI with feedback buttons</span></div>
+        <div class="file-item"><span class="file-name">main.py</span><span class="file-desc">CLI entry point for testing</span></div>
+        <div class="file-item"><span class="file-name">.env</span><span class="file-desc">All credentials — never commit to git</span></div>
+        <div class="file-item"><span class="file-name">.gitignore</span><span class="file-desc">Ignores .env, venv, logs, __pycache__</span></div>
+        <div class="file-item"><span class="file-name">requirements.txt</span><span class="file-desc">All frozen dependencies</span></div>
+        <div class="file-item"><span class="file-name">README.md</span><span class="file-desc">Setup guide + architecture + sample queries</span></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- NODE DETAILS -->
+  <div class="nodes-section">
+    <div class="section-title">03 — LangGraph Nodes</div>
+    <div class="nodes-grid">
+
+      <div class="node-card guard-card">
+        <div class="node-card-title"><div class="node-num">1</div>Input Guardrail</div>
+        <div class="node-card-desc">Uses Gemini to classify intent into SCHEMA_INFO, DATA_QUERY, or HARMFUL. Blocks DDL operations before reaching LLM. Returns dynamic schema info from Qdrant when user asks about available tables.</div>
+        <div class="node-tags">
+          <span class="tag">intent classification</span>
+          <span class="tag">DDL blocking</span>
+          <span class="tag">Gemini</span>
+          <span class="tag">Qdrant scroll</span>
+        </div>
+      </div>
+
+      <div class="node-card schema-card">
+        <div class="node-card-title"><div class="node-num">2</div>Schema Retrieval</div>
+        <div class="node-card-desc">Embeds user query using Gemini embedding model (3072 dims). Searches Qdrant using cosine similarity. Returns top-2 relevant tables with db_type — this determines which database to route to.</div>
+        <div class="node-tags">
+          <span class="tag">RAG</span>
+          <span class="tag">cosine similarity</span>
+          <span class="tag">Qdrant query_points</span>
+          <span class="tag">db routing</span>
+        </div>
+      </div>
+
+      <div class="node-card rel-card">
+        <div class="node-card-title"><div class="node-num">3</div>Relevance Check</div>
+        <div class="node-card-desc">Asks Gemini YES/NO — is this query answerable with retrieved tables? Prevents wrong table matches. Without this, "show students" would try to query customers table.</div>
+        <div class="node-tags">
+          <span class="tag">yes/no classification</span>
+          <span class="tag">Gemini</span>
+          <span class="tag">hallucination prevention</span>
+        </div>
+      </div>
+
+      <div class="node-card gen-card">
+        <div class="node-card-title"><div class="node-num">4</div>SQL Generation</div>
+        <div class="node-card-desc">Builds a structured few-shot prompt with role, rules, schema, custom formulas (revenue = quantity * unit_price * (1-discount_rate)), and 4 examples. Sends to Gemini. Cleans markdown backticks from response.</div>
+        <div class="node-tags">
+          <span class="tag">few-shot prompting</span>
+          <span class="tag">Gemini LLM</span>
+          <span class="tag">multi-DB dialect</span>
+          <span class="tag">MQL support</span>
+        </div>
+      </div>
+
+      <div class="node-card val-card">
+        <div class="node-card-title"><div class="node-num">5</div>SQL Validation</div>
+        <div class="node-card-desc">Independent second guardrail. Checks query starts with SELECT. Uses regex word boundaries to block DROP, DELETE, TRUNCATE, ALTER — without false positives on column names like deleted_at.</div>
+        <div class="node-tags">
+          <span class="tag">defense in depth</span>
+          <span class="tag">regex</span>
+          <span class="tag">SELECT enforcement</span>
+        </div>
+      </div>
+
+      <div class="node-card exec-card">
+        <div class="node-card-title"><div class="node-num">6</div>Execution</div>
+        <div class="node-card-desc">Routes by db_type from state. PostgreSQL via psycopg2, MySQL via pymysql, MongoDB parses LLM JSON then calls collection.find(). Returns standard {columns, rows} format for all databases.</div>
+        <div class="node-tags">
+          <span class="tag">db routing</span>
+          <span class="tag">psycopg2</span>
+          <span class="tag">pymysql</span>
+          <span class="tag">pymongo</span>
+          <span class="tag">Langfuse tracking</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- TECH STACK -->
+  <div class="tech-section">
+    <div class="section-title">04 — Tech Stack</div>
+    <div class="tech-grid">
+      <div class="tech-card"><div class="tech-icon">🔗</div><div class="tech-info"><div class="tech-name">LangGraph</div><div class="tech-role">agent framework</div></div></div>
+      <div class="tech-card"><div class="tech-icon">🤖</div><div class="tech-info"><div class="tech-name">Google Gemini</div><div class="tech-role">LLM + embeddings</div></div></div>
+      <div class="tech-card"><div class="tech-icon">🗄</div><div class="tech-info"><div class="tech-name">Qdrant</div><div class="tech-role">vector database</div></div></div>
+      <div class="tech-card"><div class="tech-icon">🐘</div><div class="tech-info"><div class="tech-name">PostgreSQL</div><div class="tech-role">relational DB</div></div></div>
+      <div class="tech-card"><div class="tech-icon">🐬</div><div class="tech-info"><div class="tech-name">MySQL</div><div class="tech-role">relational DB</div></div></div>
+      <div class="tech-card"><div class="tech-icon">🍃</div><div class="tech-info"><div class="tech-name">MongoDB</div><div class="tech-role">document DB</div></div></div>
+      <div class="tech-card"><div class="tech-icon">🖥</div><div class="tech-info"><div class="tech-name">Streamlit</div><div class="tech-role">frontend UI</div></div></div>
+      <div class="tech-card"><div class="tech-icon">📈</div><div class="tech-info"><div class="tech-name">Langfuse</div><div class="tech-role">observability</div></div></div>
+      <div class="tech-card"><div class="tech-icon">🐳</div><div class="tech-info"><div class="tech-name">Docker</div><div class="tech-role">containerization</div></div></div>
+      <div class="tech-card"><div class="tech-icon">🐍</div><div class="tech-info"><div class="tech-name">Python 3.12</div><div class="tech-role">language</div></div></div>
+      <div class="tech-card"><div class="tech-icon">📝</div><div class="tech-info"><div class="tech-name">python-dotenv</div><div class="tech-role">config management</div></div></div>
+      <div class="tech-card"><div class="tech-icon">📊</div><div class="tech-info"><div class="tech-name">Pandas</div><div class="tech-role">result formatting</div></div></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Built by Deepika Dubey &nbsp;·&nbsp; Text-to-SQL Agent &nbsp;·&nbsp; 2026
+  </div>
+
+</div>
+</body>
+</html>
